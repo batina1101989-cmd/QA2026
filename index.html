@@ -991,68 +991,55 @@
       themeToggle.querySelector('span').textContent = 'Тема';
     });
 
-    // ===== INIT: LOAD DATA VIA REST API =====
+    // ===== INIT =====
     let refreshInterval = null;
+
+    function applyCloudDirs(dirsData) {
+      if (dirsData) {
+        Object.keys(dirsData).forEach(k => {
+          if (dirsData[k] && Array.isArray(dirsData[k].links)) directions[k] = dirsData[k];
+        });
+      }
+    }
+
+    function applyCloudBtns(btnsData) {
+      if (btnsData && Array.isArray(btnsData) && btnsData.length > 0) mainButtons = btnsData;
+    }
 
     async function dbRefreshData() {
       try {
-        const dirsData = await dbGet('app/directions');
-        if (dirsData) {
-          Object.keys(dirsData).forEach(k => {
-            if (dirsData[k] && Array.isArray(dirsData[k].links)) directions[k] = dirsData[k];
-          });
-        }
-      } catch (e) { console.warn('Refresh directions error:', e); }
-
-      try {
-        const btnsData = await dbGet('app/mainButtons');
-        if (btnsData && Array.isArray(btnsData) && btnsData.length > 0) mainButtons = btnsData;
-      } catch (e) { console.warn('Refresh buttons error:', e); }
-
-      if (!dirKey && feedbackStatsMode !== 'true') renderMainPage();
+        const [dirsData, btnsData] = await Promise.all([dbGet('app/directions'), dbGet('app/mainButtons')]);
+        applyCloudDirs(dirsData);
+        applyCloudBtns(btnsData);
+        if (!dirKey && feedbackStatsMode !== 'true') renderMainPage();
+      } catch (e) { console.warn('Refresh error:', e); }
     }
 
     async function initApp() {
-      try {
-        const dirsData = await dbGet('app/directions');
-        if (dirsData) {
-          Object.keys(dirsData).forEach(k => {
-            if (dirsData[k] && Array.isArray(dirsData[k].links)) directions[k] = dirsData[k];
-          });
-        }
-      } catch (e) { console.warn('Directions load fallback to defaults:', e); }
+      renderMainPage();
+      hideLoading();
 
       try {
-        const btnsData = await dbGet('app/mainButtons');
-        if (btnsData && Array.isArray(btnsData) && btnsData.length > 0) mainButtons = btnsData;
-      } catch (e) { console.warn('MainButtons load fallback to defaults:', e); }
+        const [dirsData, btnsData] = await Promise.all([dbGet('app/directions'), dbGet('app/mainButtons')]);
+        applyCloudDirs(dirsData);
+        applyCloudBtns(btnsData);
+
+        if (!dirsData) await dbSet('app/directions', JSON.parse(JSON.stringify(directionsDefaults)));
+        if (!btnsData) await dbSet('app/mainButtons', JSON.parse(JSON.stringify(defaultMainButtons)));
+      } catch (e) { console.warn('Init cloud load error:', e); }
 
       if (feedbackStatsMode === 'true') {
         feedbackList = await dbLoadFeedback();
+        renderMainPage();
+      } else {
+        renderMainPage();
       }
 
-      // Poll for updates every 15 seconds (instead of WebSocket)
       if (refreshInterval) clearInterval(refreshInterval);
-      refreshInterval = setInterval(dbRefreshData, 15000);
-
-      renderMainPage();
-      hideLoading();
+      refreshInterval = setInterval(dbRefreshData, 30000);
     }
 
-    async function ensureDbDefaults() {
-      try {
-        const dirsData = await dbGet('app/directions');
-        if (!dirsData) {
-          await dbSet('app/directions', JSON.parse(JSON.stringify(directionsDefaults)));
-        }
-        const btnsData = await dbGet('app/mainButtons');
-        if (!btnsData) {
-          await dbSet('app/mainButtons', JSON.parse(JSON.stringify(defaultMainButtons)));
-        }
-      } catch (e) { console.warn('Ensure defaults error:', e); }
-    }
-
-    ensureDbDefaults().then(() => initApp());
+    initApp();
   </script>
 </body>
 </html>
