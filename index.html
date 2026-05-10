@@ -500,7 +500,7 @@
     async function dbSaveDirections() {
       try {
         await dbSet('app/directions', JSON.parse(JSON.stringify(directions)));
-        console.log('Directions saved');
+        console.log('Directions saved OK');
       } catch (e) {
         console.error('Save directions error:', e);
         alert('Ошибка сохранения направлений: ' + e.message);
@@ -510,7 +510,7 @@
     async function dbSaveMainButtons() {
       try {
         await dbSet('app/mainButtons', JSON.parse(JSON.stringify(mainButtons)));
-        console.log('MainButtons saved');
+        console.log('MainButtons saved OK');
       } catch (e) {
         console.error('Save mainButtons error:', e);
         alert('Ошибка сохранения кнопок: ' + e.message);
@@ -631,20 +631,20 @@
             window.location.href = `?dir=${btn.id}`;
           };
           if (isAdmin) {
-            createAdminIcons(c, isAdmin, () => {
+            createAdminIcons(c, isAdmin, async () => {
               if (confirm('Удалить?')) {
                 mainButtons.splice(mainButtons.findIndex(b => b.id === btn.id), 1);
-                dbSaveMainButtons();
+                await dbSaveMainButtons();
                 rb(reorderArrayByIndices(mainButtons, loadOrder(ORDER_KEYS.mainButtons, mainButtons)));
               }
-            }, () => {
+            }, async () => {
               const nt = prompt('Название:', btn.text);
               if (nt) btn.text = nt;
               const nh = prompt('Ссылка:', btn.href);
               if (nh) btn.href = nh;
               const ns = prompt('Подзаголовок:', btn.sub || '');
               if (ns !== null) btn.sub = ns;
-              dbSaveMainButtons();
+              await dbSaveMainButtons();
               rb(reorderArrayByIndices(mainButtons, loadOrder(ORDER_KEYS.mainButtons, mainButtons)));
             });
           }
@@ -659,7 +659,7 @@
             if (fi === ti) return;
             const mv = mainButtons.splice(fi, 1)[0];
             mainButtons.splice(ti, 0, mv);
-            dbSaveMainButtons();
+            await dbSaveMainButtons();
             saveOrder(ORDER_KEYS.mainButtons, mainButtons.map((_, i) => i));
             rb(mainButtons);
           });
@@ -670,16 +670,16 @@
           const ac = document.createElement('div');
           ac.className = 'dir-card';
           ac.innerHTML = '<div class="card-emoji ce-blue"><i class="fas fa-plus"></i></div><div class="dir-name">Добавить</div>';
-          ac.onclick = () => {
+          ac.onclick = async () => {
             const t = prompt('Название:');
             if (t) {
               const id = t.toLowerCase().replace(/\s/g, '_');
               const h = prompt('Ссылка:', `?dir=${id}`);
               const s = prompt('Подзаголовок:', '');
               mainButtons.push({ id, text: t, icon: 'fa-folder', href: h || `?dir=${id}`, sub: s || '' });
-              dbSaveMainButtons();
+              await dbSaveMainButtons();
               if (!directions[id]) directions[id] = { name: t, icon: 'fa-folder', links: [] };
-              dbSaveDirections();
+              await dbSaveDirections();
               rb(reorderArrayByIndices(mainButtons, loadOrder(ORDER_KEYS.mainButtons, mainButtons)));
             }
           };
@@ -718,18 +718,18 @@
             } else { alert('Ссылка временно недоступна'); }
           };
           if (isAdmin) {
-            createAdminIcons(b, isAdmin, () => {
+            createAdminIcons(b, isAdmin, async () => {
               if (confirm('Удалить?')) {
                 dir.links.splice(dir.links.findIndex(l => l.text === link.text), 1);
-                dbSaveDirections();
+                await dbSaveDirections();
                 rl(reorderArrayByIndices(dir.links, loadOrder(ORDER_KEYS.directionLinks(dk), dir.links)));
               }
-            }, () => {
+            }, async () => {
               const nt = prompt('Текст:', link.text);
               if (nt) link.text = nt;
               const nh = prompt('URL:', link.href);
               if (nh) link.href = nh;
-              dbSaveDirections();
+              await dbSaveDirections();
               rl(reorderArrayByIndices(dir.links, loadOrder(ORDER_KEYS.directionLinks(dk), dir.links)));
             });
           }
@@ -743,7 +743,7 @@
             if (fi === idx) return;
             const mv = dir.links.splice(fi, 1)[0];
             dir.links.splice(idx, 0, mv);
-            dbSaveDirections();
+            await dbSaveDirections();
             const oi = dir.links.map((_, i) => i);
             saveOrder(ORDER_KEYS.directionLinks(dk), oi);
             rl(reorderArrayByIndices(dir.links, oi));
@@ -755,12 +755,12 @@
           const ab = document.createElement('button');
           ab.className = 'link-item';
           ab.innerHTML = '<i class="fas fa-plus link-icon"></i><span class="link-text">Добавить</span>';
-          ab.onclick = () => {
+          ab.onclick = async () => {
             const t = prompt('Текст:');
             if (t) {
               const h = prompt('URL:', '#');
               dir.links.push({ text: t, href: h || '#', type: 'link' });
-              dbSaveDirections();
+              await dbSaveDirections();
               rl(reorderArrayByIndices(dir.links, loadOrder(ORDER_KEYS.directionLinks(dk), dir.links)));
             }
           };
