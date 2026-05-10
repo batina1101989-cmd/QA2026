@@ -8,6 +8,8 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
   <style>
     :root {
       --accent: #3B82F6;
@@ -348,6 +350,31 @@
       font-weight: 500; outline: none; transition: all 0.2s var(--ease); font-size: 0.82rem;
     }
     .filter-row select:focus, .filter-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .sync-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 0.68rem; color: var(--text-muted); margin-left: 8px;
+      font-weight: 500;
+    }
+    .sync-badge .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #10B981; animation: pulse-dot 2s infinite;
+    }
+    .sync-badge .dot.offline { background: #EF4444; animation: none; }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .loading-screen {
+      position: fixed; inset: 0; z-index: 9999;
+      background: var(--bg); display: flex; align-items: center;
+      justify-content: center; flex-direction: column; gap: 16px;
+      transition: opacity 0.3s ease;
+    }
+    .loading-screen.hide { opacity: 0; pointer-events: none; }
+    .loading-spinner {
+      width: 36px; height: 36px; border: 3px solid var(--border);
+      border-top-color: var(--accent); border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { font-size: 0.82rem; color: var(--text-muted); font-weight: 500; }
     @media (max-width: 768px) {
       .wrapper { padding: 1rem; }
       h1 { font-size: 2.2rem; }
@@ -366,6 +393,10 @@
   </style>
 </head>
 <body>
+  <div id="loading" class="loading-screen">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Загрузка данных...</div>
+  </div>
   <div class="bg-grid"></div>
   <div class="bg-glow bg-glow-1"></div>
   <div class="bg-glow bg-glow-2"></div>
@@ -385,63 +416,631 @@
     <footer><p>© Quality · Управление качеством</p></footer>
   </div>
   <script>
-    const ORDER_KEYS={mainButtons:'main_buttons_order',directionLinks:(dir)=>`direction_${dir}_links_order`};
-    const CE=['ce-blue','ce-teal','ce-rose','ce-amber','ce-violet'];
-    const defaultMainButtons=[
-      {id:'service',text:'Сервис',icon:'fa-headset',href:'?dir=service',sub:'Оценка и стандарты'},
-      {id:'sales',text:'Продажи',icon:'fa-arrow-trend-up',href:'?dir=sales',sub:'Метрики и аналитика'},
-      {id:'retention',text:'Сохранение',icon:'fa-shield-heart',href:'?dir=retention',sub:'Удержание клиентов'}
+    // ===== FIREBASE CONFIG =====
+    // Замените на свои данные из Firebase Console → Project Settings → Your apps → Firebase SDK snippet
+    const firebaseConfig = {
+      apiKey: "AIzaSyBtDMYNuJheIvLVW7Jrh8_TiYYH-kJS0S4",
+      authDomain: "quality-hub-4b70d.firebaseapp.com",
+      projectId: "quality-hub-4b70d",
+      storageBucket: "quality-hub-4b70d.firebasestorage.app",
+      messagingSenderId: "56117632639",
+      appId: "1:56117632639:web:4120ee2615c709f734694a",
+      measurementId: "G-RNZXKEPDF8"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // ===== CONSTANTS & DEFAULTS =====
+    const ORDER_KEYS = {
+      mainButtons: 'main_buttons_order',
+      directionLinks: (dir) => `direction_${dir}_links_order`
+    };
+    const CE = ['ce-blue', 'ce-teal', 'ce-rose', 'ce-amber', 'ce-violet'];
+    const ADMIN_PASSWORD = 'beeline2025';
+
+    const defaultMainButtons = [
+      { id: 'service', text: 'Сервис', icon: 'fa-headset', href: '?dir=service', sub: '' },
+      { id: 'sales', text: 'Продажи', icon: 'fa-arrow-trend-up', href: '?dir=sales', sub: '' },
+      { id: 'retention', text: 'Сохранение', icon: 'fa-shield-heart', href: '?dir=retention', sub: '' }
     ];
-    const directionsDefaults={
-      service:{name:"Сервис",icon:"fa-headset",links:[
-        {text:"Регламенты оценки качества / Матрицы оценки / Карта фрода",href:"#",type:"link"},
-        {text:"Описание скоринга / Новости / Процесс взаимодействия с учениками",href:"#",type:"link"},
-        {text:"Стандарты обслуживания",href:"#",type:"link"},
-        {text:"Чат бот",href:"#",type:"link"},
-        {text:"Отчет по качеству",href:"#",type:"link"},
-        {text:"Нормативы / Цели",href:"#",type:"link"},
-        {text:"Контроль качества. Жалобы / Благодарности / Ошибки сотрудников",href:"#",type:"link"}
+
+    const directionsDefaults = {
+      service: { name: "Сервис", icon: "fa-headset", links: [
+        { text: "Регламенты оценки качества / Матрицы оценки / Карта фрода", href: "#", type: "link" },
+        { text: "Описание скоринга / Новости / Процесс взаимодействия с учениками", href: "#", type: "link" },
+        { text: "Стандарты обслуживания", href: "#", type: "link" },
+        { text: "Чат бот", href: "#", type: "link" },
+        { text: "Отчет по качеству", href: "#", type: "link" },
+        { text: "Нормативы / Цели", href: "#", type: "link" },
+        { text: "Контроль качества. Жалобы / Благодарности / Ошибки сотрудников", href: "#", type: "link" }
       ]},
-      sales:{name:"Продажи",icon:"fa-arrow-trend-up",links:[
-        {text:"Регламенты оценки качества / Матрицы оценки / Карта фрода",href:"#",type:"link"},
-        {text:"Описание скоринга / Новости / Процесс взаимодействия с учениками",href:"#",type:"link"},
-        {text:"Стандарты обслуживания",href:"#",type:"link"},
-        {text:"Отчет по качеству",href:"#",type:"link"},
-        {text:"Нормативы / Цели",href:"#",type:"link"},
-        {text:"Чат бот",href:"#",type:"link"},
-        {text:"Контроль качества. Жалобы / Благодарности / Ошибки сотрудников",href:"#",type:"link"}
+      sales: { name: "Продажи", icon: "fa-arrow-trend-up", links: [
+        { text: "Регламенты оценки качества / Матрицы оценки / Карта фрода", href: "#", type: "link" },
+        { text: "Описание скоринга / Новости / Процесс взаимодействия с учениками", href: "#", type: "link" },
+        { text: "Стандарты обслуживания", href: "#", type: "link" },
+        { text: "Отчет по качеству", href: "#", type: "link" },
+        { text: "Нормативы / Цели", href: "#", type: "link" },
+        { text: "Чат бот", href: "#", type: "link" },
+        { text: "Контроль качества. Жалобы / Благодарности / Ошибки сотрудников", href: "#", type: "link" }
       ]},
-      retention:{name:"Сохранение",icon:"fa-shield-heart",links:[
-        {text:"Регламенты оценки качества / Матрицы оценки / Карта фрода",href:"#",type:"link"},
-        {text:"Описание скоринга / Новости / Процесс взаимодействия с учениками",href:"#",type:"link"},
-        {text:"Стандарты обслуживания",href:"#",type:"link"},
-        {text:"Чат бот",href:"#",type:"link"},
-        {text:"Отчет по качеству",href:"#",type:"link"},
-        {text:"Нормативы / Цели",href:"#",type:"link"},
-        {text:"Контроль качества. Жалобы / Благодарности / Ошибки сотрудников",href:"#",type:"link"}
+      retention: { name: "Сохранение", icon: "fa-shield-heart", links: [
+        { text: "Регламенты оценки качества / Матрицы оценки / Карта фрода", href: "#", type: "link" },
+        { text: "Описание скоринга / Новости / Процесс взаимодействия с учениками", href: "#", type: "link" },
+        { text: "Стандарты обслуживания", href: "#", type: "link" },
+        { text: "Чат бот", href: "#", type: "link" },
+        { text: "Отчет по качеству", href: "#", type: "link" },
+        { text: "Нормативы / Цели", href: "#", type: "link" },
+        { text: "Контроль качества. Жалобы / Благодарности / Ошибки сотрудников", href: "#", type: "link" }
       ]}
     };
-    function fixReportsLinks(dirs){Object.keys(dirs).forEach(k=>{if(dirs[k]&&Array.isArray(dirs[k].links)){dirs[k].links.forEach(link=>{if(link.text&&link.text.includes('Отчет по качеству')&&link.type!=='link'){link.type='link';if(!link.href||link.href==='reports'||link.href==='reports-sales'||link.href==='reports-retention'){link.href='#';}}});}});}
-    function saveOrder(k,a){localStorage.setItem(k,JSON.stringify(a));}
-    function loadOrder(k,da){const s=localStorage.getItem(k);if(s){try{const o=JSON.parse(s);if(Array.isArray(o)&&o.length===da.length)return o;}catch(e){}}return da.map((_,i)=>i);}
-    function reorderArrayByIndices(a,oi){const r=[];oi.forEach(i=>{if(i>=0&&i<a.length)r.push(a[i]);});return r;}
-    function createAdminIcons(p,ia,od,oe){if(!ia)return;const ei=document.createElement('i');ei.className='fas fa-pencil-alt adm-icon edit';ei.title='Редактировать';ei.onclick=oe;const di=document.createElement('i');di.className='fas fa-trash-alt adm-icon delete';di.title='Удалить';di.onclick=od;p.appendChild(ei);p.appendChild(di);}
-    function createDragIcon(el,isL=false){const d=document.createElement('i');d.className=isL?'fas fa-grip-vertical link-drag-handle':'fas fa-grip-vertical drag-handle';d.title='Перетащить';el.appendChild(d);return d;}
-    function saveMainButtons(){localStorage.setItem('mainButtons',JSON.stringify(mainButtons));}
-    function addQualityTooltip(btn){const tt=document.createElement('div');tt.className='tooltip-card';tt.innerHTML='<div class="tt-title"><span class="tt-badge"><i class="fas fa-lock"></i></span> Требуется доступ</div>Доступ предоставляется по заявке <strong>QLIK Stream 02.027_A. Customer Care Qlik Sense. Доступ к Стримам</strong> роль <strong>Пользователь</strong>';btn.appendChild(tt);}
-    function renderMainPage(){const m=document.getElementById('main-content');if(feedbackStatsMode==='true'){renderFeedbackStatsPage();return;}if(dirKey&&directions[dirKey]){renderDirectionPage(dirKey);return;}renderMainButtonsPage();}
-    function renderMainButtonsPage(){const m=document.getElementById('main-content');m.innerHTML=`<div class="section-title"><i class="fas fa-compass"></i> Выбери направление</div><div class="directions-grid" id="dir-grid"></div>`;const g=document.getElementById('dir-grid');let cb=[...mainButtons];const so=loadOrder(ORDER_KEYS.mainButtons,cb);const ob=reorderArrayByIndices(cb,so);function rb(buttons){g.innerHTML='';const f=document.createDocumentFragment();buttons.forEach((btn,idx)=>{const c=document.createElement('div');c.className='dir-card';c.setAttribute('data-id',btn.id);const cc=CE[idx%CE.length];c.innerHTML=`<div class="card-emoji ${cc}"><i class="fas ${btn.icon||'fa-star'}"></i></div><div class="dir-name">${btn.text}</div>${btn.sub?'<div class="dir-sub">'+btn.sub+'</div>':''}`;createDragIcon(c);c.onclick=(e)=>{if(e.target.closest('.drag-handle')||e.target.closest('.adm-icon'))return;localStorage.setItem('currentDirection',btn.id);window.location.href=`?dir=${btn.id}`;};if(isAdmin){createAdminIcons(c,isAdmin,()=>{if(confirm('Удалить?')){mainButtons.splice(mainButtons.findIndex(b=>b.id===btn.id),1);saveMainButtons();rb(reorderArrayByIndices(mainButtons,loadOrder(ORDER_KEYS.mainButtons,mainButtons)));}},()=>{const nt=prompt('Название:',btn.text);if(nt)btn.text=nt;const nh=prompt('Ссылка:',btn.href);if(nh)btn.href=nh;saveMainButtons();rb(reorderArrayByIndices(mainButtons,loadOrder(ORDER_KEYS.mainButtons,mainButtons)));});}c.draggable=true;c.addEventListener('dragstart',(e)=>{e.dataTransfer.setData('text/plain',btn.id);c.classList.add('dragging');});c.addEventListener('dragend',()=>c.classList.remove('dragging'));c.addEventListener('dragover',(e)=>e.preventDefault());c.addEventListener('drop',(e)=>{e.preventDefault();const fi=mainButtons.findIndex(b=>b.id===e.dataTransfer.getData('text/plain'));const ti=mainButtons.findIndex(b=>b.id===btn.id);if(fi===ti)return;const mv=mainButtons.splice(fi,1)[0];mainButtons.splice(ti,0,mv);saveMainButtons();saveOrder(ORDER_KEYS.mainButtons,mainButtons.map((_,i)=>i));rb(mainButtons);});f.appendChild(c);});g.appendChild(f);if(isAdmin){const ac=document.createElement('div');ac.className='dir-card';ac.innerHTML='<div class="card-emoji ce-blue"><i class="fas fa-plus"></i></div><div class="dir-name">Добавить</div>';ac.onclick=()=>{const t=prompt('Название:');if(t){const id=t.toLowerCase().replace(/\s/g,'_');const h=prompt('Ссылка:',`?dir=${id}`);mainButtons.push({id,text:t,icon:'fa-folder',href:h||`?dir=${id}`,sub:''});saveMainButtons();if(!directions[id])directions[id]={name:t,icon:'fa-folder',links:[]};localStorage.setItem('directionsData',JSON.stringify(directions));rb(reorderArrayByIndices(mainButtons,loadOrder(ORDER_KEYS.mainButtons,mainButtons)));}};g.appendChild(ac);}}rb(ob);addAdminFAB();}
-    function renderDirectionPage(dk){const dir=directions[dk];const m=document.getElementById('main-content');m.innerHTML=`<button id="back-btn"><i class="fas fa-arrow-left"></i> Назад</button><div class="section-title"><i class="fas ${dir.icon||'fa-folder'}"></i> ${dir.name}</div><div id="links-container" class="links-grid"></div>`;const ct=document.getElementById('links-container');const so=loadOrder(ORDER_KEYS.directionLinks(dk),dir.links);const ol=reorderArrayByIndices(dir.links,so);function rl(links){ct.innerHTML='';const f=document.createDocumentFragment();links.forEach((link,idx)=>{const b=document.createElement('button');b.className='link-item';b.setAttribute('data-idx',idx);b.innerHTML=`<i class="fas fa-arrow-up-right-from-square link-icon"></i><span class="link-text">${link.text}</span>`;createDragIcon(b,true);if(link.text&&link.text.includes('Отчет по качеству')){addQualityTooltip(b);}b.onclick=(e)=>{if(e.target.closest('.link-drag-handle')||e.target.closest('.link-adm-icon')||e.target.closest('.tooltip-card'))return;if(link.href&&link.href!=='#'){const cl=JSON.parse(localStorage.getItem('quality_clicks')||'[]');cl.push({timestamp:new Date().toISOString(),direction:dir.name,linkText:link.text});localStorage.setItem('quality_clicks',JSON.stringify(cl));window.open(link.href,'_blank');}else{alert('Ссылка временно недоступна');}};if(isAdmin){createAdminIcons(b,isAdmin,()=>{if(confirm('Удалить?')){dir.links.splice(dir.links.findIndex(l=>l.text===link.text),1);localStorage.setItem('directionsData',JSON.stringify(directions));rl(reorderArrayByIndices(dir.links,loadOrder(ORDER_KEYS.directionLinks(dk),dir.links)));}},()=>{const nt=prompt('Текст:',link.text);if(nt)link.text=nt;const nh=prompt('URL:',link.href);if(nh)link.href=nh;localStorage.setItem('directionsData',JSON.stringify(directions));rl(reorderArrayByIndices(dir.links,loadOrder(ORDER_KEYS.directionLinks(dk),dir.links)));});}b.draggable=true;b.addEventListener('dragstart',(e)=>{e.dataTransfer.setData('text/plain',idx);b.classList.add('dragging');});b.addEventListener('dragend',()=>b.classList.remove('dragging'));b.addEventListener('dragover',(e)=>e.preventDefault());b.addEventListener('drop',(e)=>{e.preventDefault();const fi=parseInt(e.dataTransfer.getData('text/plain'),10);if(fi===idx)return;const mv=dir.links.splice(fi,1)[0];dir.links.splice(idx,0,mv);localStorage.setItem('directionsData',JSON.stringify(directions));const oi=dir.links.map((_,i)=>i);saveOrder(ORDER_KEYS.directionLinks(dk),oi);rl(reorderArrayByIndices(dir.links,oi));});f.appendChild(b);});ct.appendChild(f);if(isAdmin){const ab=document.createElement('button');ab.className='link-item';ab.innerHTML='<i class="fas fa-plus link-icon"></i><span class="link-text">Добавить</span>';ab.onclick=()=>{const t=prompt('Текст:');if(t){const h=prompt('URL:','#');dir.links.push({text:t,href:h||'#',type:'link'});localStorage.setItem('directionsData',JSON.stringify(directions));rl(reorderArrayByIndices(dir.links,loadOrder(ORDER_KEYS.directionLinks(dk),dir.links)));}};ct.appendChild(ab);}}rl(ol);addFeedbackSection(dir.name);document.getElementById('back-btn').onclick=()=>window.location.href=window.location.pathname;}
-    function renderFeedbackStatsPage(){const fb=JSON.parse(localStorage.getItem('quality_feedback')||'[]');const m=document.getElementById('main-content');const rc={1:0,2:0,3:0,4:0,5:0};fb.forEach(f=>{if(f.rating>=1&&f.rating<=5)rc[f.rating]++;});const t=fb.length;function prd(ds){if(!ds)return null;const p=ds.split(',')[0].split('.');if(p.length!==3)return null;return new Date(parseInt(p[2],10),parseInt(p[1],10)-1,parseInt(p[0],10));}const mn=["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];const ys=new Set();const ms=new Set();fb.forEach(f=>{const d=prd(f.timestamp);if(d){ys.add(d.getFullYear());ms.add(d.getMonth());}});const sy=Array.from(ys).sort((a,b)=>b-a);const sm=Array.from(ms).sort((a,b)=>a-b);const md={};fb.forEach(f=>{const d=prd(f.timestamp);if(d){const ym=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;if(!md[ym])md[ym]={month:mn[d.getMonth()]+' '+d.getFullYear(),ratings:[0,0,0,0,0],count:0,avgRating:0};md[ym].ratings[f.rating-1]++;md[ym].count++;md[ym].avgRating+=f.rating;}});const sym=Object.keys(md).sort();const cl=sym.map(ym=>md[ym].month);const cd={labels:cl,datasets:[{label:'Средний балл',data:sym.map(ym=>{const d=md[ym];return d.count>0?parseFloat((d.avgRating/d.count).toFixed(2)):0;}),backgroundColor:'#3B82F6',borderColor:'#3B82F6',borderWidth:2,tension:0.4,yAxisID:'y'},{label:'Количество отзывов',data:sym.map(ym=>md[ym].count),backgroundColor:'rgba(20,184,166,0.2)',borderColor:'#14B8A6',borderWidth:2,type:'bar',yAxisID:'y1'}]};m.innerHTML=`<button id="back-btn"><i class="fas fa-arrow-left"></i> Назад</button><div class="section-title"><i class="fas fa-chart-column"></i> Статистика обратной связи</div><div class="analytics-wrap"><div class="metric-grid"><div class="metric-box"><div class="metric-val">${t}</div><div class="metric-lbl">Всего отзывов</div></div>${[1,2,3,4,5].map(r=>'<div class="metric-box"><div class="metric-val">'+rc[r]+'</div><div class="metric-lbl">'+'★'.repeat(r)+'☆'.repeat(5-r)+' ('+(t?((rc[r]/t)*100).toFixed(1):0)+'%)</div></div>').join('')}</div><div class="pill-tabs"><button class="pill-tab active" data-tab="reviews"><i class="fas fa-comment-dots" style="margin-right:5px;"></i>Отзывы</button><button class="pill-tab" data-tab="chart"><i class="fas fa-chart-pie" style="margin-right:5px;"></i>Распределение</button><button class="pill-tab" data-tab="trend"><i class="fas fa-chart-line" style="margin-right:5px;"></i>Динамика</button></div><div id="reviews-tab" class="tab-pane active"><div class="filter-row"><select id="yf"><option value="">Все годы</option>${sy.map(y=>'<option value="'+y+'">'+y+'</option>').join('')}</select><select id="mf"><option value="">Все месяцы</option>${sm.map(mo=>'<option value="'+mo+'">'+mn[mo]+'</option>').join('')}</select><select id="rf"><option value="">Оценка</option><option value="5">★★★★★</option><option value="4">★★★★☆</option><option value="3">★★★☆☆</option><option value="2">★★☆☆☆</option><option value="1">★☆☆☆☆</option></select></div><div class="table-wrap"><table id="ft"><thead><th>Дата</th><th>Направление</th><th>Оценка</th><th>Отзыв</th></thead><tbody></tbody></table></div><button class="dl-btn" id="efb" style="margin-top:10px;"><i class="fas fa-download"></i> Скачать отзывы</button></div><div id="chart-tab" class="tab-pane"><div style="height:380px;"><canvas id="fc"></canvas></div></div><div id="trend-tab" class="tab-pane"><div style="height:380px;"><canvas id="rtc"></canvas></div></div></div>`;function rft(){const y=document.getElementById('yf').value;const mo=document.getElementById('mf').value;const ra=document.getElementById('rf').value;let fl=[...fb];if(y)fl=fl.filter(f=>{const d=prd(f.timestamp);return d&&d.getFullYear()==y;});if(mo!=="")fl=fl.filter(f=>{const d=prd(f.timestamp);return d&&d.getMonth()==mo;});if(ra)fl=fl.filter(f=>f.rating===parseInt(ra));const tb=document.querySelector('#ft tbody');if(tb){tb.innerHTML='';fl.forEach(f=>{const d=prd(f.timestamp);let fd='—';if(d)fd=String(d.getDate()).padStart(2,'0')+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+d.getFullYear();const tr=document.createElement('tr');tr.innerHTML='<td>'+fd+'</td><td>'+f.direction+'</td><td>'+'★'.repeat(f.rating)+'☆'.repeat(5-f.rating)+'</td><td>'+(f.comment||'')+'</td>';tb.appendChild(tr);});}}function rrc(){const ctx=document.getElementById('fc').getContext('2d');if(ctx){if(window.fbC)window.fbC.destroy();window.fbC=new Chart(ctx,{type:'bar',data:{labels:['★☆☆☆☆','★★☆☆☆','★★★☆☆','★★★★☆','★★★★★'],datasets:[{label:'Отзывы',data:[rc[1],rc[2],rc[3],rc[4],rc[5]],backgroundColor:'#3B82F6',borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#94A3B8'}}},scales:{y:{beginAtZero:true,ticks:{color:'#94A3B8'},grid:{color:'rgba(148,163,184,0.08)'}},x:{ticks:{color:'#94A3B8'},grid:{color:'rgba(148,163,184,0.08)'}}}}});}}function rrtc(){const ctx=document.getElementById('rtc').getContext('2d');if(ctx&&cl.length>0){if(window.fTC)window.fTC.destroy();window.fTC=new Chart(ctx,{type:'line',data:cd,options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top',labels:{color:'#94A3B8'}}},scales:{y:{type:'linear',display:true,position:'left',beginAtZero:true,max:5,ticks:{color:'#94A3B8'},grid:{color:'rgba(148,163,184,0.08)'},title:{display:true,text:'Средний балл',color:'#94A3B8'}},y1:{type:'linear',display:true,position:'right',beginAtZero:true,ticks:{color:'#94A3B8'},grid:{color:'rgba(148,163,184,0.08)'},title:{display:true,text:'Отзывы',color:'#94A3B8'}}}}});}}document.getElementById('yf').addEventListener('change',rft);document.getElementById('mf').addEventListener('change',rft);document.getElementById('rf').addEventListener('change',rft);document.getElementById('efb').addEventListener('click',()=>{const y=document.getElementById('yf').value;const mo=document.getElementById('mf').value;const ra=document.getElementById('rf').value;let fl=[...fb];if(y)fl=fl.filter(f=>{const d=prd(f.timestamp);return d&&d.getFullYear()==y;});if(mo!=="")fl=fl.filter(f=>{const d=prd(f.timestamp);return d&&d.getMonth()==mo;});if(ra)fl=fl.filter(f=>f.rating===parseInt(ra));const ws=XLSX.utils.json_to_sheet(fl.map(f=>({Дата:f.timestamp,Направление:f.direction,Оценка:f.rating+' звезд',Отзыв:f.comment})));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Отзывы');XLSX.writeFile(wb,'отзывы_'+new Date().toISOString().slice(0,10)+'.xlsx');});rft();rrc();rrtc();const tabs=document.querySelectorAll('.pill-tab');tabs.forEach(tab=>{tab.addEventListener('click',()=>{tabs.forEach(x=>x.classList.remove('active'));tab.classList.add('active');document.querySelectorAll('.tab-pane').forEach(c=>c.classList.remove('active'));document.getElementById(tab.dataset.tab+'-tab').classList.add('active');if(tab.dataset.tab==='trend')rrtc();else if(tab.dataset.tab==='chart')rrc();});});document.getElementById('back-btn').onclick=()=>window.location.href=window.location.pathname;}
-    function addFeedbackSection(dn){const m=document.getElementById('main-content');const ex=document.querySelector('.feedback-card');if(ex)ex.remove();const d=document.createElement('div');d.className='feedback-card';d.innerHTML=`<h3><i class="fas fa-sparkles" style="color:var(--bee-yellow)"></i> Обратная связь</h3><p style="margin-bottom:4px;">Твоё мнение помогает становиться лучше</p><div class="stars-row" id="stars-row">${[1,2,3,4,5].map(i=>'<i class="far fa-star" data-val="'+i+'"></i>').join('')}</div><textarea id="fb-text" rows="3" placeholder="Комментарий или предложение..."></textarea><button class="btn-send" id="send-fb"><i class="fas fa-paper-plane"></i> Отправить</button>`;m.appendChild(d);let rating=0;const stars=d.querySelectorAll('.stars-row i');const offColor='var(--border)';stars.forEach(s=>{s.addEventListener('click',()=>{rating=parseInt(s.dataset.val);stars.forEach(ss=>{if(parseInt(ss.dataset.val)<=rating)ss.className='fas fa-star active';else ss.className='far fa-star';});});s.addEventListener('mouseenter',()=>{const hv=parseInt(s.dataset.val);stars.forEach(ss=>{if(parseInt(ss.dataset.val)<=hv)ss.style.color='#FFD600';else ss.style.color=offColor;});});s.addEventListener('mouseleave',()=>{stars.forEach(ss=>{if(parseInt(ss.dataset.val)<=rating)ss.style.color='#FFD600';else ss.style.color=offColor;});});});d.querySelector('#send-fb').onclick=()=>{if(rating===0)return alert('Поставьте оценку');const fb={timestamp:new Date().toLocaleString(),direction:dn,rating:rating,comment:d.querySelector('#fb-text').value||'Без комментария'};const list=JSON.parse(localStorage.getItem('quality_feedback')||'[]');list.push(fb);localStorage.setItem('quality_feedback',JSON.stringify(list));alert('Спасибо за отзыв!');rating=0;stars.forEach(s=>{s.className='far fa-star';s.style.color=offColor;});d.querySelector('#fb-text').value='';};}
-    function addAdminFAB(){const b=document.createElement('button');b.className='fab';b.innerHTML=isAdmin?'<i class="fas fa-sign-out-alt"></i>':'<i class="fas fa-lock"></i>';b.onclick=()=>{if(isAdmin){localStorage.removeItem('adminActive');location.reload();}else{const p=prompt('Пароль:');if(p==='beeline2025'){localStorage.setItem('adminActive','true');location.reload();}else alert('Неверный пароль');}};document.body.appendChild(b);if(isAdmin){const sb=document.createElement('button');sb.className='fab';sb.style.bottom='84px';sb.style.background='linear-gradient(135deg,#EF4444,#DC2626)';sb.innerHTML='<i class="fas fa-chart-column"></i>';sb.onclick=()=>{window.location.href='?feedback=true';};document.body.appendChild(sb);}}
-    const themeToggle=document.getElementById('theme-toggle');if(localStorage.getItem('dark-theme-v2')==='true')document.body.classList.add('dark');themeToggle.addEventListener('click',()=>{document.body.classList.toggle('dark');const isD=document.body.classList.contains('dark');localStorage.setItem('dark-theme-v2',isD);themeToggle.querySelector('i').className=isD?'fas fa-moon':'fas fa-sun';themeToggle.querySelector('span').textContent='Тема';});
-    let directions=JSON.parse(JSON.stringify(directionsDefaults));let mainButtons=[...defaultMainButtons];
-    const savedData=localStorage.getItem('directionsData');if(savedData){try{const l=JSON.parse(savedData);Object.keys(directions).forEach(k=>{if(l[k]&&Array.isArray(l[k].links))directions[k].links=l[k].links;});}catch(e){}}
-    fixReportsLinks(directions);localStorage.setItem('directionsData',JSON.stringify(directions));
-    const savedMB=localStorage.getItem('mainButtons');if(savedMB){try{const p=JSON.parse(savedMB);if(Array.isArray(p)&&p.length>0)mainButtons=p;}catch(e){}}
-    const isAdmin=localStorage.getItem('adminActive')==='true';const urlParams=new URLSearchParams(window.location.search);const dirKey=urlParams.get('dir');const feedbackStatsMode=urlParams.get('feedback');
-    renderMainPage();
+
+    // ===== STATE =====
+    let mainButtons = JSON.parse(JSON.stringify(defaultMainButtons));
+    let directions = JSON.parse(JSON.stringify(directionsDefaults));
+    let feedbackList = [];
+    let isAdmin = localStorage.getItem('adminActive') === 'true';
+    const urlParams = new URLSearchParams(window.location.search);
+    const dirKey = urlParams.get('dir');
+    const feedbackStatsMode = urlParams.get('feedback');
+
+    // ===== FIRESTORE HELPERS =====
+    async function firestoreSaveDirections() {
+      try {
+        await db.collection('app').doc('directions').set({ data: JSON.parse(JSON.stringify(directions)) });
+        console.log('Directions saved to Firestore');
+      } catch (e) {
+        console.error('Firestore save directions error:', e);
+        alert('Ошибка сохранения направлений: ' + e.message);
+      }
+    }
+
+    async function firestoreSaveMainButtons() {
+      try {
+        await db.collection('app').doc('mainButtons').set({ data: JSON.parse(JSON.stringify(mainButtons)) });
+        console.log('MainButtons saved to Firestore');
+      } catch (e) {
+        console.error('Firestore save mainButtons error:', e);
+        alert('Ошибка сохранения кнопок: ' + e.message);
+      }
+    }
+
+    async function firestoreSaveFeedback(fbItem) {
+      try {
+        await db.collection('feedback').add({
+          ...fbItem,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      } catch (e) {
+        console.error('Firestore save feedback error:', e);
+        alert('Ошибка сохранения отзыва: ' + e.message);
+      }
+    }
+
+    async function firestoreLoadFeedback() {
+      try {
+        const snap = await db.collection('feedback').orderBy('createdAt', 'desc').get();
+        return snap.docs.map(d => d.data());
+      } catch (e) {
+        console.error('Firestore load feedback error:', e);
+        alert('Ошибка загрузки отзывов: ' + e.message);
+        return [];
+      }
+    }
+
+    // ===== LOCAL STORAGE HELPERS (order only) =====
+    function saveOrder(k, a) { localStorage.setItem(k, JSON.stringify(a)); }
+    function loadOrder(k, da) {
+      const s = localStorage.getItem(k);
+      if (s) { try { const o = JSON.parse(s); if (Array.isArray(o) && o.length === da.length) return o; } catch (e) { } }
+      return da.map((_, i) => i);
+    }
+    function reorderArrayByIndices(a, oi) {
+      const r = []; oi.forEach(i => { if (i >= 0 && i < a.length) r.push(a[i]); }); return r;
+    }
+
+    // ===== UI HELPERS =====
+    function createAdminIcons(p, ia, od, oe) {
+      if (!ia) return;
+      const ei = document.createElement('i');
+      ei.className = 'fas fa-pencil-alt adm-icon edit';
+      ei.title = 'Редактировать';
+      ei.onclick = oe;
+      const di = document.createElement('i');
+      di.className = 'fas fa-trash-alt adm-icon delete';
+      di.title = 'Удалить';
+      di.onclick = od;
+      p.appendChild(ei);
+      p.appendChild(di);
+    }
+
+    function createDragIcon(el, isL = false) {
+      const d = document.createElement('i');
+      d.className = isL ? 'fas fa-grip-vertical link-drag-handle' : 'fas fa-grip-vertical drag-handle';
+      d.title = 'Перетащить';
+      el.appendChild(d);
+      return d;
+    }
+
+    function addQualityTooltip(btn) {
+      const tt = document.createElement('div');
+      tt.className = 'tooltip-card';
+      tt.innerHTML = '<div class="tt-title"><span class="tt-badge"><i class="fas fa-lock"></i></span> Требуется доступ</div>Доступ предоставляется по заявке <strong>QLIK Stream 02.027_A. Customer Care Qlik Sense. Доступ к Стримам</strong> роль <strong>Пользователь</strong>';
+      btn.appendChild(tt);
+    }
+
+    function hideLoading() {
+      const el = document.getElementById('loading');
+      if (el) { el.classList.add('hide'); setTimeout(() => el.remove(), 400); }
+    }
+
+    function showSyncBadge(container) {
+      const badge = document.createElement('span');
+      badge.className = 'sync-badge';
+      badge.id = 'sync-badge';
+      badge.innerHTML = '<span class="dot"></span> Облачная синхронизация';
+      container.appendChild(badge);
+    }
+
+    // ===== RENDER: MAIN PAGE =====
+    function renderMainPage() {
+      const m = document.getElementById('main-content');
+      if (feedbackStatsMode === 'true') { renderFeedbackStatsPage(); return; }
+      if (dirKey && directions[dirKey]) { renderDirectionPage(dirKey); return; }
+      renderMainButtonsPage();
+    }
+
+    function renderMainButtonsPage() {
+      const m = document.getElementById('main-content');
+      m.innerHTML = `<div class="section-title"><i class="fas fa-compass"></i> Выбери направление</div><div class="directions-grid" id="dir-grid"></div>`;
+      const g = document.getElementById('dir-grid');
+      showSyncBadge(m.querySelector('.section-title'));
+
+      let cb = [...mainButtons];
+      const so = loadOrder(ORDER_KEYS.mainButtons, cb);
+      const ob = reorderArrayByIndices(cb, so);
+
+      function rb(buttons) {
+        g.innerHTML = '';
+        const f = document.createDocumentFragment();
+        buttons.forEach((btn, idx) => {
+          const c = document.createElement('div');
+          c.className = 'dir-card';
+          c.setAttribute('data-id', btn.id);
+          const cc = CE[idx % CE.length];
+          c.innerHTML = `<div class="card-emoji ${cc}"><i class="fas ${btn.icon || 'fa-star'}"></i></div><div class="dir-name">${btn.text}</div>${btn.sub ? '<div class="dir-sub">' + btn.sub + '</div>' : ''}`;
+          createDragIcon(c);
+          c.onclick = (e) => {
+            if (e.target.closest('.drag-handle') || e.target.closest('.adm-icon')) return;
+            localStorage.setItem('currentDirection', btn.id);
+            window.location.href = `?dir=${btn.id}`;
+          };
+          if (isAdmin) {
+            createAdminIcons(c, isAdmin, () => {
+              if (confirm('Удалить?')) {
+                mainButtons.splice(mainButtons.findIndex(b => b.id === btn.id), 1);
+                firestoreSaveMainButtons();
+                rb(reorderArrayByIndices(mainButtons, loadOrder(ORDER_KEYS.mainButtons, mainButtons)));
+              }
+            }, () => {
+              const nt = prompt('Название:', btn.text);
+              if (nt) btn.text = nt;
+              const nh = prompt('Ссылка:', btn.href);
+              if (nh) btn.href = nh;
+              const ns = prompt('Подзаголовок:', btn.sub || '');
+              if (ns !== null) btn.sub = ns;
+              firestoreSaveMainButtons();
+              rb(reorderArrayByIndices(mainButtons, loadOrder(ORDER_KEYS.mainButtons, mainButtons)));
+            });
+          }
+          c.draggable = true;
+          c.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', btn.id); c.classList.add('dragging'); });
+          c.addEventListener('dragend', () => c.classList.remove('dragging'));
+          c.addEventListener('dragover', (e) => e.preventDefault());
+          c.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const fi = mainButtons.findIndex(b => b.id === e.dataTransfer.getData('text/plain'));
+            const ti = mainButtons.findIndex(b => b.id === btn.id);
+            if (fi === ti) return;
+            const mv = mainButtons.splice(fi, 1)[0];
+            mainButtons.splice(ti, 0, mv);
+            firestoreSaveMainButtons();
+            saveOrder(ORDER_KEYS.mainButtons, mainButtons.map((_, i) => i));
+            rb(mainButtons);
+          });
+          f.appendChild(c);
+        });
+        g.appendChild(f);
+        if (isAdmin) {
+          const ac = document.createElement('div');
+          ac.className = 'dir-card';
+          ac.innerHTML = '<div class="card-emoji ce-blue"><i class="fas fa-plus"></i></div><div class="dir-name">Добавить</div>';
+          ac.onclick = () => {
+            const t = prompt('Название:');
+            if (t) {
+              const id = t.toLowerCase().replace(/\s/g, '_');
+              const h = prompt('Ссылка:', `?dir=${id}`);
+              const s = prompt('Подзаголовок:', '');
+              mainButtons.push({ id, text: t, icon: 'fa-folder', href: h || `?dir=${id}`, sub: s || '' });
+              firestoreSaveMainButtons();
+              if (!directions[id]) directions[id] = { name: t, icon: 'fa-folder', links: [] };
+              firestoreSaveDirections();
+              rb(reorderArrayByIndices(mainButtons, loadOrder(ORDER_KEYS.mainButtons, mainButtons)));
+            }
+          };
+          g.appendChild(ac);
+        }
+      }
+      rb(ob);
+      addAdminFAB();
+    }
+
+    // ===== RENDER: DIRECTION PAGE =====
+    function renderDirectionPage(dk) {
+      const dir = directions[dk];
+      const m = document.getElementById('main-content');
+      m.innerHTML = `<button id="back-btn"><i class="fas fa-arrow-left"></i> Назад</button><div class="section-title"><i class="fas ${dir.icon || 'fa-folder'}"></i> ${dir.name}</div><div id="links-container" class="links-grid"></div>`;
+      showSyncBadge(m.querySelector('.section-title'));
+      const ct = document.getElementById('links-container');
+      const so = loadOrder(ORDER_KEYS.directionLinks(dk), dir.links);
+      const ol = reorderArrayByIndices(dir.links, so);
+
+      function rl(links) {
+        ct.innerHTML = '';
+        const f = document.createDocumentFragment();
+        links.forEach((link, idx) => {
+          const b = document.createElement('button');
+          b.className = 'link-item';
+          b.setAttribute('data-idx', idx);
+          b.innerHTML = `<i class="fas fa-arrow-up-right-from-square link-icon"></i><span class="link-text">${link.text}</span>`;
+          createDragIcon(b, true);
+          if (link.text && link.text.includes('Отчет по качеству')) { addQualityTooltip(b); }
+          b.onclick = (e) => {
+            if (e.target.closest('.link-drag-handle') || e.target.closest('.link-adm-icon') || e.target.closest('.tooltip-card')) return;
+            if (link.href && link.href !== '#') {
+              db.collection('clicks').add({ timestamp: firebase.firestore.FieldValue.serverTimestamp(), direction: dir.name, linkText: link.text });
+              window.open(link.href, '_blank');
+            } else { alert('Ссылка временно недоступна'); }
+          };
+          if (isAdmin) {
+            createAdminIcons(b, isAdmin, () => {
+              if (confirm('Удалить?')) {
+                dir.links.splice(dir.links.findIndex(l => l.text === link.text), 1);
+                firestoreSaveDirections();
+                rl(reorderArrayByIndices(dir.links, loadOrder(ORDER_KEYS.directionLinks(dk), dir.links)));
+              }
+            }, () => {
+              const nt = prompt('Текст:', link.text);
+              if (nt) link.text = nt;
+              const nh = prompt('URL:', link.href);
+              if (nh) link.href = nh;
+              firestoreSaveDirections();
+              rl(reorderArrayByIndices(dir.links, loadOrder(ORDER_KEYS.directionLinks(dk), dir.links)));
+            });
+          }
+          b.draggable = true;
+          b.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', idx); b.classList.add('dragging'); });
+          b.addEventListener('dragend', () => b.classList.remove('dragging'));
+          b.addEventListener('dragover', (e) => e.preventDefault());
+          b.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const fi = parseInt(e.dataTransfer.getData('text/plain'), 10);
+            if (fi === idx) return;
+            const mv = dir.links.splice(fi, 1)[0];
+            dir.links.splice(idx, 0, mv);
+            firestoreSaveDirections();
+            const oi = dir.links.map((_, i) => i);
+            saveOrder(ORDER_KEYS.directionLinks(dk), oi);
+            rl(reorderArrayByIndices(dir.links, oi));
+          });
+          f.appendChild(b);
+        });
+        ct.appendChild(f);
+        if (isAdmin) {
+          const ab = document.createElement('button');
+          ab.className = 'link-item';
+          ab.innerHTML = '<i class="fas fa-plus link-icon"></i><span class="link-text">Добавить</span>';
+          ab.onclick = () => {
+            const t = prompt('Текст:');
+            if (t) {
+              const h = prompt('URL:', '#');
+              dir.links.push({ text: t, href: h || '#', type: 'link' });
+              firestoreSaveDirections();
+              rl(reorderArrayByIndices(dir.links, loadOrder(ORDER_KEYS.directionLinks(dk), dir.links)));
+            }
+          };
+          ct.appendChild(ab);
+        }
+      }
+      rl(ol);
+      addFeedbackSection(dir.name);
+      document.getElementById('back-btn').onclick = () => window.location.href = window.location.pathname;
+    }
+
+    // ===== RENDER: FEEDBACK STATS =====
+    function renderFeedbackStatsPage() {
+      const fb = feedbackList;
+      const m = document.getElementById('main-content');
+      const rc = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+      fb.forEach(f => { if (f.rating >= 1 && f.rating <= 5) rc[f.rating]++; });
+      const t = fb.length;
+
+      function prd(ds) {
+        if (!ds) return null;
+        const p = ds.split(',')[0].split('.');
+        if (p.length !== 3) return null;
+        return new Date(parseInt(p[2], 10), parseInt(p[1], 10) - 1, parseInt(p[0], 10));
+      }
+
+      const mn = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
+      const ys = new Set(); const ms = new Set();
+      fb.forEach(f => { const d = prd(f.timestamp); if (d) { ys.add(d.getFullYear()); ms.add(d.getMonth()); } });
+      const sy = Array.from(ys).sort((a, b) => b - a);
+      const sm = Array.from(ms).sort((a, b) => a - b);
+      const md = {};
+      fb.forEach(f => {
+        const d = prd(f.timestamp);
+        if (d) {
+          const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          if (!md[ym]) md[ym] = { month: mn[d.getMonth()] + ' ' + d.getFullYear(), ratings: [0, 0, 0, 0, 0], count: 0, avgRating: 0 };
+          md[ym].ratings[f.rating - 1]++; md[ym].count++; md[ym].avgRating += f.rating;
+        }
+      });
+      const sym = Object.keys(md).sort();
+      const cl = sym.map(ym => md[ym].month);
+      const cd = {
+        labels: cl, datasets: [
+          { label: 'Средний балл', data: sym.map(ym => { const d = md[ym]; return d.count > 0 ? parseFloat((d.avgRating / d.count).toFixed(2)) : 0; }), backgroundColor: '#3B82F6', borderColor: '#3B82F6', borderWidth: 2, tension: 0.4, yAxisID: 'y' },
+          { label: 'Количество отзывов', data: sym.map(ym => md[ym].count), backgroundColor: 'rgba(20,184,166,0.2)', borderColor: '#14B8A6', borderWidth: 2, type: 'bar', yAxisID: 'y1' }
+        ]
+      };
+
+      m.innerHTML = `<button id="back-btn"><i class="fas fa-arrow-left"></i> Назад</button>
+        <div class="section-title"><i class="fas fa-chart-column"></i> Статистика обратной связи</div>
+        <div class="analytics-wrap">
+          <div class="metric-grid">
+            <div class="metric-box"><div class="metric-val">${t}</div><div class="metric-lbl">Всего отзывов</div></div>
+            ${[1, 2, 3, 4, 5].map(r => '<div class="metric-box"><div class="metric-val">' + rc[r] + '</div><div class="metric-lbl">' + '★'.repeat(r) + '☆'.repeat(5 - r) + ' (' + (t ? ((rc[r] / t) * 100).toFixed(1) : 0) + '%)</div></div>').join('')}
+          </div>
+          <div class="pill-tabs">
+            <button class="pill-tab active" data-tab="reviews"><i class="fas fa-comment-dots" style="margin-right:5px;"></i>Отзывы</button>
+            <button class="pill-tab" data-tab="chart"><i class="fas fa-chart-pie" style="margin-right:5px;"></i>Распределение</button>
+            <button class="pill-tab" data-tab="trend"><i class="fas fa-chart-line" style="margin-right:5px;"></i>Динамика</button>
+          </div>
+          <div id="reviews-tab" class="tab-pane active">
+            <div class="filter-row">
+              <select id="yf"><option value="">Все годы</option>${sy.map(y => '<option value="' + y + '">' + y + '</option>').join('')}</select>
+              <select id="mf"><option value="">Все месяцы</option>${sm.map(mo => '<option value="' + mo + '">' + mn[mo] + '</option>').join('')}</select>
+              <select id="rf"><option value="">Оценка</option><option value="5">★★★★★</option><option value="4">★★★★☆</option><option value="3">★★★☆☆</option><option value="2">★★☆☆☆</option><option value="1">★☆☆☆☆</option></select>
+            </div>
+            <div class="table-wrap"><table id="ft"><thead><th>Дата</th><th>Направление</th><th>Оценка</th><th>Отзыв</th></thead><tbody></tbody></table></div>
+            <button class="dl-btn" id="efb" style="margin-top:10px;"><i class="fas fa-download"></i> Скачать все отзывы (.xlsx)</button>
+          </div>
+          <div id="chart-tab" class="tab-pane"><div style="height:380px;"><canvas id="fc"></canvas></div></div>
+          <div id="trend-tab" class="tab-pane"><div style="height:380px;"><canvas id="rtc"></canvas></div></div>
+        </div>`;
+
+      function rft() {
+        const y = document.getElementById('yf').value;
+        const mo = document.getElementById('mf').value;
+        const ra = document.getElementById('rf').value;
+        let fl = [...fb];
+        if (y) fl = fl.filter(f => { const d = prd(f.timestamp); return d && d.getFullYear() == y; });
+        if (mo !== "") fl = fl.filter(f => { const d = prd(f.timestamp); return d && d.getMonth() == mo; });
+        if (ra) fl = fl.filter(f => f.rating === parseInt(ra));
+        const tb = document.querySelector('#ft tbody');
+        if (tb) {
+          tb.innerHTML = '';
+          fl.forEach(f => {
+            const d = prd(f.timestamp);
+            let fd = '—';
+            if (d) fd = String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + d.getFullYear();
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + fd + '</td><td>' + f.direction + '</td><td>' + '★'.repeat(f.rating) + '☆'.repeat(5 - f.rating) + '</td><td>' + (f.comment || '') + '</td>';
+            tb.appendChild(tr);
+          });
+        }
+      }
+
+      function rrc() {
+        const ctx = document.getElementById('fc').getContext('2d');
+        if (ctx) {
+          if (window.fbC) window.fbC.destroy();
+          window.fbC = new Chart(ctx, {
+            type: 'bar',
+            data: { labels: ['★☆☆☆☆', '★★☆☆☆', '★★★☆☆', '★★★★☆', '★★★★★'], datasets: [{ label: 'Отзывы', data: [rc[1], rc[2], rc[3], rc[4], rc[5]], backgroundColor: '#3B82F6', borderRadius: 6 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { color: '#94A3B8' } } }, scales: { y: { beginAtZero: true, ticks: { color: '#94A3B8' }, grid: { color: 'rgba(148,163,184,0.08)' } }, x: { ticks: { color: '#94A3B8' }, grid: { color: 'rgba(148,163,184,0.08)' } } } }
+          });
+        }
+      }
+
+      function rrtc() {
+        const ctx = document.getElementById('rtc').getContext('2d');
+        if (ctx && cl.length > 0) {
+          if (window.fTC) window.fTC.destroy();
+          window.fTC = new Chart(ctx, {
+            type: 'line', data: cd,
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { color: '#94A3B8' } } }, scales: { y: { type: 'linear', display: true, position: 'left', beginAtZero: true, max: 5, ticks: { color: '#94A3B8' }, grid: { color: 'rgba(148,163,184,0.08)' }, title: { display: true, text: 'Средний балл', color: '#94A3B8' } }, y1: { type: 'linear', display: true, position: 'right', beginAtZero: true, ticks: { color: '#94A3B8' }, grid: { color: 'rgba(148,163,184,0.08)' }, title: { display: true, text: 'Отзывы', color: '#94A3B8' } } } }
+          });
+        }
+      }
+
+      document.getElementById('yf').addEventListener('change', rft);
+      document.getElementById('mf').addEventListener('change', rft);
+      document.getElementById('rf').addEventListener('change', rft);
+
+      document.getElementById('efb').addEventListener('click', () => {
+        const y = document.getElementById('yf').value;
+        const mo = document.getElementById('mf').value;
+        const ra = document.getElementById('rf').value;
+        let fl = [...fb];
+        if (y) fl = fl.filter(f => { const d = prd(f.timestamp); return d && d.getFullYear() == y; });
+        if (mo !== "") fl = fl.filter(f => { const d = prd(f.timestamp); return d && d.getMonth() == mo; });
+        if (ra) fl = fl.filter(f => f.rating === parseInt(ra));
+        const ws = XLSX.utils.json_to_sheet(fl.map(f => ({ Дата: f.timestamp, Направление: f.direction, Оценка: f.rating + ' звезд', Отзыв: f.comment })));
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Отзывы');
+        XLSX.writeFile(wb, 'отзывы_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+      });
+
+      rft(); rrc(); rrtc();
+
+      document.querySelectorAll('.pill-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          document.querySelectorAll('.pill-tab').forEach(x => x.classList.remove('active'));
+          tab.classList.add('active');
+          document.querySelectorAll('.tab-pane').forEach(c => c.classList.remove('active'));
+          document.getElementById(tab.dataset.tab + '-tab').classList.add('active');
+          if (tab.dataset.tab === 'trend') rrtc(); else if (tab.dataset.tab === 'chart') rrc();
+        });
+      });
+
+      document.getElementById('back-btn').onclick = () => window.location.href = window.location.pathname;
+    }
+
+    // ===== FEEDBACK SECTION =====
+    function addFeedbackSection(dn) {
+      const m = document.getElementById('main-content');
+      const ex = document.querySelector('.feedback-card');
+      if (ex) ex.remove();
+      const d = document.createElement('div');
+      d.className = 'feedback-card';
+      d.innerHTML = `<h3><i class="fas fa-sparkles" style="color:var(--bee-yellow)"></i> Обратная связь</h3><p style="margin-bottom:4px;">Твоё мнение помогает становиться лучше</p><div class="stars-row" id="stars-row">${[1, 2, 3, 4, 5].map(i => '<i class="far fa-star" data-val="' + i + '"></i>').join('')}</div><textarea id="fb-text" rows="3" placeholder="Комментарий или предложение..."></textarea><button class="btn-send" id="send-fb"><i class="fas fa-paper-plane"></i> Отправить</button>`;
+      m.appendChild(d);
+      let rating = 0;
+      const stars = d.querySelectorAll('.stars-row i');
+      const offColor = 'var(--border)';
+      stars.forEach(s => {
+        s.addEventListener('click', () => {
+          rating = parseInt(s.dataset.val);
+          stars.forEach(ss => { if (parseInt(ss.dataset.val) <= rating) ss.className = 'fas fa-star active'; else ss.className = 'far fa-star'; });
+        });
+        s.addEventListener('mouseenter', () => {
+          const hv = parseInt(s.dataset.val);
+          stars.forEach(ss => { if (parseInt(ss.dataset.val) <= hv) ss.style.color = '#FFD600'; else ss.style.color = offColor; });
+        });
+        s.addEventListener('mouseleave', () => {
+          stars.forEach(ss => { if (parseInt(ss.dataset.val) <= rating) ss.style.color = '#FFD600'; else ss.style.color = offColor; });
+        });
+      });
+      d.querySelector('#send-fb').onclick = async () => {
+        if (rating === 0) return alert('Поставьте оценку');
+        const fbItem = {
+          timestamp: new Date().toLocaleString(),
+          direction: dn,
+          rating: rating,
+          comment: d.querySelector('#fb-text').value || 'Без комментария'
+        };
+        await firestoreSaveFeedback(fbItem);
+        alert('Спасибо за отзыв!');
+        rating = 0;
+        stars.forEach(s => { s.className = 'far fa-star'; s.style.color = offColor; });
+        d.querySelector('#fb-text').value = '';
+      };
+    }
+
+    // ===== ADMIN FAB =====
+    function addAdminFAB() {
+      document.querySelectorAll('.fab').forEach(f => f.remove());
+      const b = document.createElement('button');
+      b.className = 'fab';
+      b.innerHTML = isAdmin ? '<i class="fas fa-sign-out-alt"></i>' : '<i class="fas fa-lock"></i>';
+      b.onclick = () => {
+        if (isAdmin) { localStorage.removeItem('adminActive'); location.reload(); }
+        else {
+          const p = prompt('Пароль:');
+          if (p === ADMIN_PASSWORD) { localStorage.setItem('adminActive', 'true'); location.reload(); }
+          else alert('Неверный пароль');
+        }
+      };
+      document.body.appendChild(b);
+      if (isAdmin) {
+        const sb = document.createElement('button');
+        sb.className = 'fab';
+        sb.style.bottom = '84px';
+        sb.style.background = 'linear-gradient(135deg,#EF4444,#DC2626)';
+        sb.innerHTML = '<i class="fas fa-chart-column"></i>';
+        sb.onclick = () => { window.location.href = '?feedback=true'; };
+        document.body.appendChild(sb);
+      }
+    }
+
+    // ===== THEME =====
+    const themeToggle = document.getElementById('theme-toggle');
+    if (localStorage.getItem('dark-theme-v2') === 'true') document.body.classList.add('dark');
+    themeToggle.addEventListener('click', () => {
+      document.body.classList.toggle('dark');
+      const isD = document.body.classList.contains('dark');
+      localStorage.setItem('dark-theme-v2', isD);
+      themeToggle.querySelector('i').className = isD ? 'fas fa-moon' : 'fas fa-sun';
+      themeToggle.querySelector('span').textContent = 'Тема';
+    });
+
+    // ===== INIT: LOAD DATA FROM FIREBASE =====
+    async function initApp() {
+      try {
+        const dirsDoc = await db.collection('app').doc('directions').get();
+        if (dirsDoc.exists && dirsDoc.data().data) {
+          const cloudData = dirsDoc.data().data;
+          Object.keys(cloudData).forEach(k => {
+            if (cloudData[k] && Array.isArray(cloudData[k].links)) directions[k] = cloudData[k];
+          });
+        }
+      } catch (e) { console.warn('Directions load fallback to defaults:', e); }
+
+      try {
+        const btnsDoc = await db.collection('app').doc('mainButtons').get();
+        if (btnsDoc.exists && btnsDoc.data().data) {
+          const cloudBtns = btnsDoc.data().data;
+          if (Array.isArray(cloudBtns) && cloudBtns.length > 0) mainButtons = cloudBtns;
+        }
+      } catch (e) { console.warn('MainButtons load fallback to defaults:', e); }
+
+      if (feedbackStatsMode === 'true') {
+        feedbackList = await firestoreLoadFeedback();
+      }
+
+      // Real-time listener for directions (admin changes visible to all)
+      db.collection('app').doc('directions').onSnapshot(doc => {
+        if (doc.exists && doc.data().data) {
+          const cloudData = doc.data().data;
+          Object.keys(cloudData).forEach(k => {
+            if (cloudData[k] && Array.isArray(cloudData[k].links)) directions[k] = cloudData[k];
+          });
+          if (!dirKey && feedbackStatsMode !== 'true') renderMainPage();
+        }
+      });
+
+      // Real-time listener for main buttons
+      db.collection('app').doc('mainButtons').onSnapshot(doc => {
+        if (doc.exists && doc.data().data) {
+          const cloudBtns = doc.data().data;
+          if (Array.isArray(cloudBtns) && cloudBtns.length > 0) {
+            mainButtons = cloudBtns;
+            if (!dirKey && feedbackStatsMode !== 'true') renderMainPage();
+          }
+        }
+      });
+
+      renderMainPage();
+      hideLoading();
+    }
+
+    // Initialize Firestore with defaults if empty
+    async function ensureFirestoreDefaults() {
+      try {
+        const dirsDoc = await db.collection('app').doc('directions').get();
+        if (!dirsDoc.exists) {
+          await db.collection('app').doc('directions').set({ data: JSON.parse(JSON.stringify(directionsDefaults)) });
+        }
+        const btnsDoc = await db.collection('app').doc('mainButtons').get();
+        if (!btnsDoc.exists) {
+          await db.collection('app').doc('mainButtons').set({ data: JSON.parse(JSON.stringify(defaultMainButtons)) });
+        }
+      } catch (e) { console.warn('Ensure defaults error:', e); }
+    }
+
+    ensureFirestoreDefaults().then(() => initApp());
   </script>
 </body>
 </html>
