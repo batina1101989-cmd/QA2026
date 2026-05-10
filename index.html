@@ -992,76 +992,46 @@
     });
 
     // ===== INIT =====
-    let refreshInterval = null;
-
-    function applyCloudDirs(dirsData) {
-      if (dirsData) {
-        Object.keys(dirsData).forEach(k => {
-          if (dirsData[k] && Array.isArray(dirsData[k].links)) directions[k] = dirsData[k];
-        });
-      }
-    }
-
-    function applyCloudBtns(btnsData) {
-      if (btnsData && Array.isArray(btnsData) && btnsData.length > 0) mainButtons = btnsData;
-    }
-
-    function fetchWithTimeout(url, ms) {
-      return Promise.race([
-        fetch(url),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), ms))
-      ]);
-    }
-
-    async function dbGetFast(path) {
-      const res = await fetchWithTimeout(`${DB_URL}/${path}.json`, 5000);
-      if (!res.ok) throw new Error('DB read error: ' + res.status);
-      return await res.json();
-    }
-
-    async function loadCloudData() {
-      try {
-        const [dirsData, btnsData] = await Promise.all([
-          dbGetFast('app/directions').catch(() => null),
-          dbGetFast('app/mainButtons').catch(() => null)
-        ]);
-        if (dirsData) {
-          applyCloudDirs(dirsData);
-        } else {
-          await dbSet('app/directions', JSON.parse(JSON.stringify(directionsDefaults)));
-        }
-        if (btnsData) {
-          applyCloudBtns(btnsData);
-        } else {
-          await dbSet('app/mainButtons', JSON.parse(JSON.stringify(defaultMainButtons)));
-        }
-        renderMainPage();
-      } catch (e) { console.warn('Cloud load error:', e); }
-    }
-
-    async function dbRefreshData() {
-      try {
-        const [dirsData, btnsData] = await Promise.all([
-          dbGetFast('app/directions').catch(() => null),
-          dbGetFast('app/mainButtons').catch(() => null)
-        ]);
-        let changed = false;
-        if (dirsData) { applyCloudDirs(dirsData); changed = true; }
-        if (btnsData) { applyCloudBtns(btnsData); changed = true; }
-        if (changed && !dirKey && feedbackStatsMode !== 'true') renderMainPage();
-      } catch (e) { console.warn('Refresh error:', e); }
-    }
-
     renderMainPage();
     hideLoading();
-    loadCloudData();
 
-    if (feedbackStatsMode === 'true') {
-      dbLoadFeedback().then(list => { feedbackList = list; renderMainPage(); }).catch(() => {});
-    }
+    (async function loadCloud() {
+      try {
+        const dirsData = await dbGet('app/directions');
+        if (dirsData) {
+          Object.keys(dirsData).forEach(k => {
+            if (dirsData[k] && Array.isArray(dirsData[k].links)) directions[k] = dirsData[k];
+          });
+        }
+      } catch (e) {}
 
-    if (refreshInterval) clearInterval(refreshInterval);
-    refreshInterval = setInterval(dbRefreshData, 30000);
+      try {
+        const btnsData = await dbGet('app/mainButtons');
+        if (btnsData && Array.isArray(btnsData) && btnsData.length > 0) mainButtons = btnsData;
+      } catch (e) {}
+
+      if (feedbackStatsMode === 'true') {
+        try { feedbackList = await dbLoadFeedback(); } catch (e) {}
+      }
+
+      renderMainPage();
+    })();
+
+    setInterval(async function refresh() {
+      try {
+        const dirsData = await dbGet('app/directions');
+        if (dirsData) {
+          Object.keys(dirsData).forEach(k => {
+            if (dirsData[k] && Array.isArray(dirsData[k].links)) directions[k] = dirsData[k];
+          });
+        }
+      } catch (e) {}
+      try {
+        const btnsData = await dbGet('app/mainButtons');
+        if (btnsData && Array.isArray(btnsData) && btnsData.length > 0) mainButtons = btnsData;
+      } catch (e) {}
+      if (!dirKey && feedbackStatsMode !== 'true') renderMainPage();
+    }, 30000);
   </script>
 </body>
 </html>
