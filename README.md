@@ -1006,40 +1006,62 @@
       if (btnsData && Array.isArray(btnsData) && btnsData.length > 0) mainButtons = btnsData;
     }
 
+    function fetchWithTimeout(url, ms) {
+      return Promise.race([
+        fetch(url),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), ms))
+      ]);
+    }
+
+    async function dbGetFast(path) {
+      const res = await fetchWithTimeout(`${DB_URL}/${path}.json`, 5000);
+      if (!res.ok) throw new Error('DB read error: ' + res.status);
+      return await res.json();
+    }
+
+    async function loadCloudData() {
+      try {
+        const [dirsData, btnsData] = await Promise.all([
+          dbGetFast('app/directions').catch(() => null),
+          dbGetFast('app/mainButtons').catch(() => null)
+        ]);
+        if (dirsData) {
+          applyCloudDirs(dirsData);
+        } else {
+          await dbSet('app/directions', JSON.parse(JSON.stringify(directionsDefaults)));
+        }
+        if (btnsData) {
+          applyCloudBtns(btnsData);
+        } else {
+          await dbSet('app/mainButtons', JSON.parse(JSON.stringify(defaultMainButtons)));
+        }
+        renderMainPage();
+      } catch (e) { console.warn('Cloud load error:', e); }
+    }
+
     async function dbRefreshData() {
       try {
-        const [dirsData, btnsData] = await Promise.all([dbGet('app/directions'), dbGet('app/mainButtons')]);
-        applyCloudDirs(dirsData);
-        applyCloudBtns(btnsData);
-        if (!dirKey && feedbackStatsMode !== 'true') renderMainPage();
+        const [dirsData, btnsData] = await Promise.all([
+          dbGetFast('app/directions').catch(() => null),
+          dbGetFast('app/mainButtons').catch(() => null)
+        ]);
+        let changed = false;
+        if (dirsData) { applyCloudDirs(dirsData); changed = true; }
+        if (btnsData) { applyCloudBtns(btnsData); changed = true; }
+        if (changed && !dirKey && feedbackStatsMode !== 'true') renderMainPage();
       } catch (e) { console.warn('Refresh error:', e); }
     }
 
-    async function initApp() {
-      renderMainPage();
-      hideLoading();
+    renderMainPage();
+    hideLoading();
+    loadCloudData();
 
-      try {
-        const [dirsData, btnsData] = await Promise.all([dbGet('app/directions'), dbGet('app/mainButtons')]);
-        applyCloudDirs(dirsData);
-        applyCloudBtns(btnsData);
-
-        if (!dirsData) await dbSet('app/directions', JSON.parse(JSON.stringify(directionsDefaults)));
-        if (!btnsData) await dbSet('app/mainButtons', JSON.parse(JSON.stringify(defaultMainButtons)));
-      } catch (e) { console.warn('Init cloud load error:', e); }
-
-      if (feedbackStatsMode === 'true') {
-        feedbackList = await dbLoadFeedback();
-        renderMainPage();
-      } else {
-        renderMainPage();
-      }
-
-      if (refreshInterval) clearInterval(refreshInterval);
-      refreshInterval = setInterval(dbRefreshData, 30000);
+    if (feedbackStatsMode === 'true') {
+      dbLoadFeedback().then(list => { feedbackList = list; renderMainPage(); }).catch(() => {});
     }
 
-    initApp();
+    if (refreshInterval) clearInterval(refreshInterval);
+    refreshInterval = setInterval(dbRefreshData, 30000);
   </script>
 </body>
 </html>
