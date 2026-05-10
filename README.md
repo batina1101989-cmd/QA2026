@@ -9,7 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
   <style>
     :root {
       --accent: #3B82F6;
@@ -421,6 +421,7 @@
     const firebaseConfig = {
       apiKey: "AIzaSyBtDMYNuJheIvLVW7Jrh8_TiYYH-kJS0S4",
       authDomain: "quality-hub-4b70d.firebaseapp.com",
+      databaseURL: "https://quality-hub-4b70d-default-rtdb.europe-west1.firebasedatabase.app",
       projectId: "quality-hub-4b70d",
       storageBucket: "quality-hub-4b70d.firebasestorage.app",
       messagingSenderId: "56117632639",
@@ -429,7 +430,7 @@
     };
 
     firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
+    const db = firebase.database();
 
     // ===== CONSTANTS & DEFAULTS =====
     const ORDER_KEYS = {
@@ -484,45 +485,47 @@
     const dirKey = urlParams.get('dir');
     const feedbackStatsMode = urlParams.get('feedback');
 
-    // ===== FIRESTORE HELPERS =====
-    async function firestoreSaveDirections() {
+    // ===== DATABASE HELPERS (Realtime Database) =====
+    async function dbSaveDirections() {
       try {
-        await db.collection('app').doc('directions').set({ data: JSON.parse(JSON.stringify(directions)) });
-        console.log('Directions saved to Firestore');
+        await db.ref('app/directions').set(JSON.parse(JSON.stringify(directions)));
+        console.log('Directions saved');
       } catch (e) {
-        console.error('Firestore save directions error:', e);
+        console.error('Save directions error:', e);
         alert('Ошибка сохранения направлений: ' + e.message);
       }
     }
 
-    async function firestoreSaveMainButtons() {
+    async function dbSaveMainButtons() {
       try {
-        await db.collection('app').doc('mainButtons').set({ data: JSON.parse(JSON.stringify(mainButtons)) });
-        console.log('MainButtons saved to Firestore');
+        await db.ref('app/mainButtons').set(JSON.parse(JSON.stringify(mainButtons)));
+        console.log('MainButtons saved');
       } catch (e) {
-        console.error('Firestore save mainButtons error:', e);
+        console.error('Save mainButtons error:', e);
         alert('Ошибка сохранения кнопок: ' + e.message);
       }
     }
 
-    async function firestoreSaveFeedback(fbItem) {
+    async function dbSaveFeedback(fbItem) {
       try {
-        await db.collection('feedback').add({
+        await db.ref('feedback').push({
           ...fbItem,
-          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+          createdAt: new Date().toISOString()
         });
       } catch (e) {
-        console.error('Firestore save feedback error:', e);
+        console.error('Save feedback error:', e);
         alert('Ошибка сохранения отзыва: ' + e.message);
       }
     }
 
-    async function firestoreLoadFeedback() {
+    async function dbLoadFeedback() {
       try {
-        const snap = await db.collection('feedback').orderBy('createdAt', 'desc').get();
-        return snap.docs.map(d => d.data());
+        const snap = await db.ref('feedback').orderByChild('createdAt').once('value');
+        const items = [];
+        snap.forEach(child => { items.push(child.val()); });
+        return items.reverse();
       } catch (e) {
-        console.error('Firestore load feedback error:', e);
+        console.error('Load feedback error:', e);
         alert('Ошибка загрузки отзывов: ' + e.message);
         return [];
       }
@@ -619,7 +622,7 @@
             createAdminIcons(c, isAdmin, () => {
               if (confirm('Удалить?')) {
                 mainButtons.splice(mainButtons.findIndex(b => b.id === btn.id), 1);
-                firestoreSaveMainButtons();
+                dbSaveMainButtons();
                 rb(reorderArrayByIndices(mainButtons, loadOrder(ORDER_KEYS.mainButtons, mainButtons)));
               }
             }, () => {
@@ -629,7 +632,7 @@
               if (nh) btn.href = nh;
               const ns = prompt('Подзаголовок:', btn.sub || '');
               if (ns !== null) btn.sub = ns;
-              firestoreSaveMainButtons();
+              dbSaveMainButtons();
               rb(reorderArrayByIndices(mainButtons, loadOrder(ORDER_KEYS.mainButtons, mainButtons)));
             });
           }
@@ -644,7 +647,7 @@
             if (fi === ti) return;
             const mv = mainButtons.splice(fi, 1)[0];
             mainButtons.splice(ti, 0, mv);
-            firestoreSaveMainButtons();
+            dbSaveMainButtons();
             saveOrder(ORDER_KEYS.mainButtons, mainButtons.map((_, i) => i));
             rb(mainButtons);
           });
@@ -662,9 +665,9 @@
               const h = prompt('Ссылка:', `?dir=${id}`);
               const s = prompt('Подзаголовок:', '');
               mainButtons.push({ id, text: t, icon: 'fa-folder', href: h || `?dir=${id}`, sub: s || '' });
-              firestoreSaveMainButtons();
+              dbSaveMainButtons();
               if (!directions[id]) directions[id] = { name: t, icon: 'fa-folder', links: [] };
-              firestoreSaveDirections();
+              dbSaveDirections();
               rb(reorderArrayByIndices(mainButtons, loadOrder(ORDER_KEYS.mainButtons, mainButtons)));
             }
           };
@@ -698,7 +701,7 @@
           b.onclick = (e) => {
             if (e.target.closest('.link-drag-handle') || e.target.closest('.link-adm-icon') || e.target.closest('.tooltip-card')) return;
             if (link.href && link.href !== '#') {
-              db.collection('clicks').add({ timestamp: firebase.firestore.FieldValue.serverTimestamp(), direction: dir.name, linkText: link.text });
+              db.ref('clicks').push({ timestamp: new Date().toISOString(), direction: dir.name, linkText: link.text });
               window.open(link.href, '_blank');
             } else { alert('Ссылка временно недоступна'); }
           };
@@ -706,7 +709,7 @@
             createAdminIcons(b, isAdmin, () => {
               if (confirm('Удалить?')) {
                 dir.links.splice(dir.links.findIndex(l => l.text === link.text), 1);
-                firestoreSaveDirections();
+                dbSaveDirections();
                 rl(reorderArrayByIndices(dir.links, loadOrder(ORDER_KEYS.directionLinks(dk), dir.links)));
               }
             }, () => {
@@ -714,7 +717,7 @@
               if (nt) link.text = nt;
               const nh = prompt('URL:', link.href);
               if (nh) link.href = nh;
-              firestoreSaveDirections();
+              dbSaveDirections();
               rl(reorderArrayByIndices(dir.links, loadOrder(ORDER_KEYS.directionLinks(dk), dir.links)));
             });
           }
@@ -728,7 +731,7 @@
             if (fi === idx) return;
             const mv = dir.links.splice(fi, 1)[0];
             dir.links.splice(idx, 0, mv);
-            firestoreSaveDirections();
+            dbSaveDirections();
             const oi = dir.links.map((_, i) => i);
             saveOrder(ORDER_KEYS.directionLinks(dk), oi);
             rl(reorderArrayByIndices(dir.links, oi));
@@ -745,7 +748,7 @@
             if (t) {
               const h = prompt('URL:', '#');
               dir.links.push({ text: t, href: h || '#', type: 'link' });
-              firestoreSaveDirections();
+              dbSaveDirections();
               rl(reorderArrayByIndices(dir.links, loadOrder(ORDER_KEYS.directionLinks(dk), dir.links)));
             }
           };
@@ -931,7 +934,7 @@
           rating: rating,
           comment: d.querySelector('#fb-text').value || 'Без комментария'
         };
-        await firestoreSaveFeedback(fbItem);
+        await dbSaveFeedback(fbItem);
         alert('Спасибо за отзыв!');
         rating = 0;
         stars.forEach(s => { s.className = 'far fa-star'; s.style.color = offColor; });
@@ -976,34 +979,32 @@
       themeToggle.querySelector('span').textContent = 'Тема';
     });
 
-    // ===== INIT: LOAD DATA FROM FIREBASE =====
+    // ===== INIT: LOAD DATA FROM REALTIME DATABASE =====
     async function initApp() {
       try {
-        const dirsDoc = await db.collection('app').doc('directions').get();
-        if (dirsDoc.exists && dirsDoc.data().data) {
-          const cloudData = dirsDoc.data().data;
-          Object.keys(cloudData).forEach(k => {
-            if (cloudData[k] && Array.isArray(cloudData[k].links)) directions[k] = cloudData[k];
+        const dirsSnap = await db.ref('app/directions').once('value');
+        const dirsData = dirsSnap.val();
+        if (dirsData) {
+          Object.keys(dirsData).forEach(k => {
+            if (dirsData[k] && Array.isArray(dirsData[k].links)) directions[k] = dirsData[k];
           });
         }
       } catch (e) { console.warn('Directions load fallback to defaults:', e); }
 
       try {
-        const btnsDoc = await db.collection('app').doc('mainButtons').get();
-        if (btnsDoc.exists && btnsDoc.data().data) {
-          const cloudBtns = btnsDoc.data().data;
-          if (Array.isArray(cloudBtns) && cloudBtns.length > 0) mainButtons = cloudBtns;
-        }
+        const btnsSnap = await db.ref('app/mainButtons').once('value');
+        const btnsData = btnsSnap.val();
+        if (btnsData && Array.isArray(btnsData) && btnsData.length > 0) mainButtons = btnsData;
       } catch (e) { console.warn('MainButtons load fallback to defaults:', e); }
 
       if (feedbackStatsMode === 'true') {
-        feedbackList = await firestoreLoadFeedback();
+        feedbackList = await dbLoadFeedback();
       }
 
-      // Real-time listener for directions (admin changes visible to all)
-      db.collection('app').doc('directions').onSnapshot(doc => {
-        if (doc.exists && doc.data().data) {
-          const cloudData = doc.data().data;
+      // Real-time listener for directions
+      db.ref('app/directions').on('value', snap => {
+        const cloudData = snap.val();
+        if (cloudData) {
           Object.keys(cloudData).forEach(k => {
             if (cloudData[k] && Array.isArray(cloudData[k].links)) directions[k] = cloudData[k];
           });
@@ -1012,13 +1013,11 @@
       });
 
       // Real-time listener for main buttons
-      db.collection('app').doc('mainButtons').onSnapshot(doc => {
-        if (doc.exists && doc.data().data) {
-          const cloudBtns = doc.data().data;
-          if (Array.isArray(cloudBtns) && cloudBtns.length > 0) {
-            mainButtons = cloudBtns;
-            if (!dirKey && feedbackStatsMode !== 'true') renderMainPage();
-          }
+      db.ref('app/mainButtons').on('value', snap => {
+        const cloudBtns = snap.val();
+        if (cloudBtns && Array.isArray(cloudBtns) && cloudBtns.length > 0) {
+          mainButtons = cloudBtns;
+          if (!dirKey && feedbackStatsMode !== 'true') renderMainPage();
         }
       });
 
@@ -1026,21 +1025,21 @@
       hideLoading();
     }
 
-    // Initialize Firestore with defaults if empty
-    async function ensureFirestoreDefaults() {
+    // Initialize database with defaults if empty
+    async function ensureDbDefaults() {
       try {
-        const dirsDoc = await db.collection('app').doc('directions').get();
-        if (!dirsDoc.exists) {
-          await db.collection('app').doc('directions').set({ data: JSON.parse(JSON.stringify(directionsDefaults)) });
+        const dirsSnap = await db.ref('app/directions').once('value');
+        if (!dirsSnap.exists()) {
+          await db.ref('app/directions').set(JSON.parse(JSON.stringify(directionsDefaults)));
         }
-        const btnsDoc = await db.collection('app').doc('mainButtons').get();
-        if (!btnsDoc.exists) {
-          await db.collection('app').doc('mainButtons').set({ data: JSON.parse(JSON.stringify(defaultMainButtons)) });
+        const btnsSnap = await db.ref('app/mainButtons').once('value');
+        if (!btnsSnap.exists()) {
+          await db.ref('app/mainButtons').set(JSON.parse(JSON.stringify(defaultMainButtons)));
         }
       } catch (e) { console.warn('Ensure defaults error:', e); }
     }
 
-    ensureFirestoreDefaults().then(() => initApp());
+    ensureDbDefaults().then(() => initApp());
   </script>
 </body>
 </html>
