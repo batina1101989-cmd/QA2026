@@ -488,13 +488,21 @@
     async function firestoreSaveDirections() {
       try {
         await db.collection('app').doc('directions').set({ data: JSON.parse(JSON.stringify(directions)) });
-      } catch (e) { console.error('Firestore save directions error:', e); }
+        console.log('Directions saved to Firestore');
+      } catch (e) {
+        console.error('Firestore save directions error:', e);
+        alert('Ошибка сохранения направлений: ' + e.message);
+      }
     }
 
     async function firestoreSaveMainButtons() {
       try {
         await db.collection('app').doc('mainButtons').set({ data: JSON.parse(JSON.stringify(mainButtons)) });
-      } catch (e) { console.error('Firestore save mainButtons error:', e); }
+        console.log('MainButtons saved to Firestore');
+      } catch (e) {
+        console.error('Firestore save mainButtons error:', e);
+        alert('Ошибка сохранения кнопок: ' + e.message);
+      }
     }
 
     async function firestoreSaveFeedback(fbItem) {
@@ -503,14 +511,21 @@
           ...fbItem,
           createdAt: firebase.firestore.FieldValue.serverTimestamp()
         });
-      } catch (e) { console.error('Firestore save feedback error:', e); }
+      } catch (e) {
+        console.error('Firestore save feedback error:', e);
+        alert('Ошибка сохранения отзыва: ' + e.message);
+      }
     }
 
     async function firestoreLoadFeedback() {
       try {
         const snap = await db.collection('feedback').orderBy('createdAt', 'desc').get();
         return snap.docs.map(d => d.data());
-      } catch (e) { console.error('Firestore load feedback error:', e); return []; }
+      } catch (e) {
+        console.error('Firestore load feedback error:', e);
+        alert('Ошибка загрузки отзывов: ' + e.message);
+        return [];
+      }
     }
 
     // ===== LOCAL STORAGE HELPERS (order only) =====
