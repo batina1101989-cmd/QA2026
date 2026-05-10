@@ -8,8 +8,6 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
   <style>
     :root {
       --accent: #3B82F6;
@@ -416,21 +414,34 @@
     <footer><p>© Quality · Управление качеством</p></footer>
   </div>
   <script>
-    // ===== FIREBASE CONFIG =====
-    // Замените на свои данные из Firebase Console → Project Settings → Your apps → Firebase SDK snippet
-    const firebaseConfig = {
-      apiKey: "AIzaSyBtDMYNuJheIvLVW7Jrh8_TiYYH-kJS0S4",
-      authDomain: "quality-hub-4b70d.firebaseapp.com",
-      databaseURL: "https://quality-hub-4b70d-default-rtdb.europe-west1.firebasedatabase.app",
-      projectId: "quality-hub-4b70d",
-      storageBucket: "quality-hub-4b70d.firebasestorage.app",
-      messagingSenderId: "56117632639",
-      appId: "1:56117632639:web:4120ee2615c709f734694a",
-      measurementId: "G-RNZXKEPDF8"
-    };
+    // ===== FIREBASE REST API (works behind corporate proxy) =====
+    const DB_URL = 'https://quality-hub-4b70d-default-rtdb.europe-west1.firebasedatabase.app';
 
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.database();
+    async function dbGet(path) {
+      const res = await fetch(`${DB_URL}/${path}.json`);
+      if (!res.ok) throw new Error('DB read error: ' + res.status);
+      return await res.json();
+    }
+
+    async function dbSet(path, data) {
+      const res = await fetch(`${DB_URL}/${path}.json`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      if (!res.ok) throw new Error('DB write error: ' + res.status);
+      return await res.json();
+    }
+
+    async function dbPush(path, data) {
+      const res = await fetch(`${DB_URL}/${path}.json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      if (!res.ok) throw new Error('DB push error: ' + res.status);
+      return await res.json();
+    }
 
     // ===== CONSTANTS & DEFAULTS =====
     const ORDER_KEYS = {
@@ -485,10 +496,10 @@
     const dirKey = urlParams.get('dir');
     const feedbackStatsMode = urlParams.get('feedback');
 
-    // ===== DATABASE HELPERS (Realtime Database) =====
+    // ===== DATABASE HELPERS (REST API) =====
     async function dbSaveDirections() {
       try {
-        await db.ref('app/directions').set(JSON.parse(JSON.stringify(directions)));
+        await dbSet('app/directions', JSON.parse(JSON.stringify(directions)));
         console.log('Directions saved');
       } catch (e) {
         console.error('Save directions error:', e);
@@ -498,7 +509,7 @@
 
     async function dbSaveMainButtons() {
       try {
-        await db.ref('app/mainButtons').set(JSON.parse(JSON.stringify(mainButtons)));
+        await dbSet('app/mainButtons', JSON.parse(JSON.stringify(mainButtons)));
         console.log('MainButtons saved');
       } catch (e) {
         console.error('Save mainButtons error:', e);
@@ -508,7 +519,7 @@
 
     async function dbSaveFeedback(fbItem) {
       try {
-        await db.ref('feedback').push({
+        await dbPush('feedback', {
           ...fbItem,
           createdAt: new Date().toISOString()
         });
@@ -520,10 +531,11 @@
 
     async function dbLoadFeedback() {
       try {
-        const snap = await db.ref('feedback').orderByChild('createdAt').once('value');
-        const items = [];
-        snap.forEach(child => { items.push(child.val()); });
-        return items.reverse();
+        const data = await dbGet('feedback');
+        if (!data) return [];
+        const items = Object.values(data);
+        items.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        return items;
       } catch (e) {
         console.error('Load feedback error:', e);
         alert('Ошибка загрузки отзывов: ' + e.message);
@@ -701,7 +713,7 @@
           b.onclick = (e) => {
             if (e.target.closest('.link-drag-handle') || e.target.closest('.link-adm-icon') || e.target.closest('.tooltip-card')) return;
             if (link.href && link.href !== '#') {
-              db.ref('clicks').push({ timestamp: new Date().toISOString(), direction: dir.name, linkText: link.text });
+              dbPush('clicks', { timestamp: new Date().toISOString(), direction: dir.name, linkText: link.text });
               window.open(link.href, '_blank');
             } else { alert('Ссылка временно недоступна'); }
           };
@@ -979,11 +991,30 @@
       themeToggle.querySelector('span').textContent = 'Тема';
     });
 
-    // ===== INIT: LOAD DATA FROM REALTIME DATABASE =====
+    // ===== INIT: LOAD DATA VIA REST API =====
+    let refreshInterval = null;
+
+    async function dbRefreshData() {
+      try {
+        const dirsData = await dbGet('app/directions');
+        if (dirsData) {
+          Object.keys(dirsData).forEach(k => {
+            if (dirsData[k] && Array.isArray(dirsData[k].links)) directions[k] = dirsData[k];
+          });
+        }
+      } catch (e) { console.warn('Refresh directions error:', e); }
+
+      try {
+        const btnsData = await dbGet('app/mainButtons');
+        if (btnsData && Array.isArray(btnsData) && btnsData.length > 0) mainButtons = btnsData;
+      } catch (e) { console.warn('Refresh buttons error:', e); }
+
+      if (!dirKey && feedbackStatsMode !== 'true') renderMainPage();
+    }
+
     async function initApp() {
       try {
-        const dirsSnap = await db.ref('app/directions').once('value');
-        const dirsData = dirsSnap.val();
+        const dirsData = await dbGet('app/directions');
         if (dirsData) {
           Object.keys(dirsData).forEach(k => {
             if (dirsData[k] && Array.isArray(dirsData[k].links)) directions[k] = dirsData[k];
@@ -992,8 +1023,7 @@
       } catch (e) { console.warn('Directions load fallback to defaults:', e); }
 
       try {
-        const btnsSnap = await db.ref('app/mainButtons').once('value');
-        const btnsData = btnsSnap.val();
+        const btnsData = await dbGet('app/mainButtons');
         if (btnsData && Array.isArray(btnsData) && btnsData.length > 0) mainButtons = btnsData;
       } catch (e) { console.warn('MainButtons load fallback to defaults:', e); }
 
@@ -1001,40 +1031,23 @@
         feedbackList = await dbLoadFeedback();
       }
 
-      // Real-time listener for directions
-      db.ref('app/directions').on('value', snap => {
-        const cloudData = snap.val();
-        if (cloudData) {
-          Object.keys(cloudData).forEach(k => {
-            if (cloudData[k] && Array.isArray(cloudData[k].links)) directions[k] = cloudData[k];
-          });
-          if (!dirKey && feedbackStatsMode !== 'true') renderMainPage();
-        }
-      });
-
-      // Real-time listener for main buttons
-      db.ref('app/mainButtons').on('value', snap => {
-        const cloudBtns = snap.val();
-        if (cloudBtns && Array.isArray(cloudBtns) && cloudBtns.length > 0) {
-          mainButtons = cloudBtns;
-          if (!dirKey && feedbackStatsMode !== 'true') renderMainPage();
-        }
-      });
+      // Poll for updates every 15 seconds (instead of WebSocket)
+      if (refreshInterval) clearInterval(refreshInterval);
+      refreshInterval = setInterval(dbRefreshData, 15000);
 
       renderMainPage();
       hideLoading();
     }
 
-    // Initialize database with defaults if empty
     async function ensureDbDefaults() {
       try {
-        const dirsSnap = await db.ref('app/directions').once('value');
-        if (!dirsSnap.exists()) {
-          await db.ref('app/directions').set(JSON.parse(JSON.stringify(directionsDefaults)));
+        const dirsData = await dbGet('app/directions');
+        if (!dirsData) {
+          await dbSet('app/directions', JSON.parse(JSON.stringify(directionsDefaults)));
         }
-        const btnsSnap = await db.ref('app/mainButtons').once('value');
-        if (!btnsSnap.exists()) {
-          await db.ref('app/mainButtons').set(JSON.parse(JSON.stringify(defaultMainButtons)));
+        const btnsData = await dbGet('app/mainButtons');
+        if (!btnsData) {
+          await dbSet('app/mainButtons', JSON.parse(JSON.stringify(defaultMainButtons)));
         }
       } catch (e) { console.warn('Ensure defaults error:', e); }
     }
