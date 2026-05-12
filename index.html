@@ -470,6 +470,27 @@
       await cloudSave('app/directions', JSON.parse(JSON.stringify(directions)));
       await cloudSave('app/mainButtons', JSON.parse(JSON.stringify(mainButtons)));
     }
+    async function syncFeedbackFromCloud() {
+      const cloudFB = await cloudLoad('feedback');
+      if (!cloudFB || typeof cloudFB !== 'object') return;
+      const cloudItems = Object.values(cloudFB);
+      const localRaw = localStorage.getItem('quality_feedback');
+      let localItems = [];
+      try { localItems = localRaw ? JSON.parse(localRaw) : []; } catch (e) {}
+      const existingKeys = new Set(localItems.map(f => f.timestamp + '|' + f.rating + '|' + f.comment));
+      let added = 0;
+      cloudItems.forEach(item => {
+        if (item && item.timestamp && item.rating) {
+          const key = item.timestamp + '|' + item.rating + '|' + item.comment;
+          if (!existingKeys.has(key)) { localItems.push(item); existingKeys.add(key); added++; }
+        }
+      });
+      if (added > 0) {
+        localStorage.setItem('quality_feedback', JSON.stringify(localItems));
+        if (feedbackStatsMode === 'true') { feedbackList = localItems; renderMainPage(); }
+      }
+    }
+
     async function syncFromCloud() {
       const dirsData = await cloudLoad('app/directions');
       if (dirsData) {
@@ -478,6 +499,7 @@
       }
       const btnsData = await cloudLoad('app/mainButtons');
       if (btnsData && Array.isArray(btnsData) && btnsData.length > 0) { mainButtons = btnsData; saveMainButtons(); }
+      await syncFeedbackFromCloud();
       renderMainPage();
     }
 
@@ -498,7 +520,7 @@
     }
     function showSyncBadge(container) {
       const badge = document.createElement('span'); badge.className = 'sync-badge';
-      badge.innerHTML = '<span class="dot"></span> Облачная синхронизация';
+      badge.innerHTML = '<span class="dot"></span>';
       container.appendChild(badge);
     }
 
