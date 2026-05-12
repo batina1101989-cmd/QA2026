@@ -387,10 +387,10 @@
     <footer><p>© Quality · Управление качеством</p></footer>
   </div>
   <script>
-    const _d = s => { const k = 'Qh360xZ'; let r = ''; for (let i = 0; i < s.length; i++) r += String.fromCharCode(s.charCodeAt(i) ^ k.charCodeAt(i % k.length)); return r; };
-    const DB_URL = _d('\x39\x1c\x47\x46\x43\x42\x75\x7e\x19\x46\x57\x5c\x11\x2e\x28\x45\x5b\x43\x52\x55\x6e\x33\x5f\x03\x52\x1d\x1c\x3f\x37\x09\x46\x5a\x44\x55\x28\x25\x0c\x51\x18\x55\x0d\x28\x3e\x18\x56\x1b\x47\x1d\x29\x25\x59\x1d\x50\x59\x0a\x3f\x33\x09\x40\x53\x54\x19\x2e\x30\x0a\x52\x45\x55\x56\x3b\x21\x18');
+    const DB_URL = 'https://quality-hub-4b70d-default-rtdb.europe-west1.firebasedatabase.app';
+    const ORDER_KEYS = { mainButtons: 'main_buttons_order', directionLinks: (dir) => `direction_${dir}_links_order` };
     const CE = ['ce-blue', 'ce-teal', 'ce-rose', 'ce-amber', 'ce-violet'];
-    const ADMIN_PASSWORD = _d('\x33\x0d\x56\x5a\x59\x16\x3f\x63\x58\x01\x03');
+    const ADMIN_PASSWORD = 'beeline2025';
 
     const defaultMainButtons = [
       { id: 'service', text: 'Сервис', icon: 'fa-headset', href: '?dir=service', sub: '' },
